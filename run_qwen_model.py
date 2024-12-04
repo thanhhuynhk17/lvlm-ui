@@ -21,17 +21,15 @@ def load_model(use_flash_attention=False):
     )
     return model
 
-processor = AutoProcessor.from_pretrained(model_path)
+max_pixels=256*28*28
+processor = AutoProcessor.from_pretrained(model_path,max_pixels=max_pixels)
 
-def process_input(image, video, prompt, temperature=0.8, top_k=50, top_p=0.9, max_tokens=100):
+def process_input(image, prompt, temperature=1.5, min_p=0.1, max_tokens=256):
     if image is not None:
         media_type = "image"
         media = image
-    elif video is not None:
-        media_type = "video"
-        media = video
     else:
-        return "Please upload an image or video."
+        return "Please upload an image"
     messages = [
         {
             "role": "user",
@@ -54,10 +52,10 @@ def process_input(image, video, prompt, temperature=0.8, top_k=50, top_p=0.9, ma
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     outputs = model.generate(
         **inputs,
+        use_cache=True,
         max_new_tokens=max_tokens,
         temperature=temperature,
-        top_k=top_k,
-        top_p=top_p
+        min_p=min_p
     )
     
     output_text = processor.batch_decode(outputs, skip_special_tokens=True)
@@ -69,16 +67,14 @@ def create_interface():
         fn=process_input,
         inputs=[
             gr.Image(type="filepath", label="Upload Image (optional)"),
-            gr.Video(label="Upload Video (optional)"),
-            gr.Textbox(label="Text Prompt"),
-            gr.Slider(0.1, 1.0, value=0.8, label="Temperature"),
-            gr.Slider(1, 100, value=50, step=1, label="Top-k"),
-            gr.Slider(0.1, 1.0, value=0.9, label="Top-p"),
-            gr.Slider(1, 500, value=100, step=10, label="Max Tokens")
+            gr.Textbox(label="Text Prompt", value="Mô tả nội dung hình ảnh"),
+            gr.Slider(0.1, 2, value=1.5, label="Temperature"),
+            gr.Slider(0.1, 1.0, value=0.1, label="min-p"),
+            gr.Slider(2, 512, value=256, step=2, label="Max Tokens")
         ],
         outputs=gr.Textbox(label="Generated Description"),
-        title="Qwen2-VL-72B Vision-Language Model",
-        description="Upload an image or video and enter a prompt to generate a description.",
+        title="Qwen2-VL-2B Finetuned",
+        description="Upload an image and enter a prompt to generate a description.",
     )
     return interface
 
