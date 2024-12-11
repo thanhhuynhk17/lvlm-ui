@@ -1,28 +1,32 @@
 import gradio as gr
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
-from qwen_vl_utils import process_vision_info
+from transformers import TextStreamer
 import torch
 import argparse
 import os
+from unsloth import FastVisionModel
+from qwen_vl_utils import process_vision_info
 
 # Use a relative path or environment variable for the model path
-model_path = os.environ.get("QWEN_MODEL_PATH", "path/to/model")
+model_path = os.environ.get("QWEN_MODEL_PATH", "thanhhuynhk17/qwen2-vl-2b-ft-freeze-vit")
 
 def load_model(use_flash_attention=False):
     model_kwargs = {
-        "torch_dtype": torch.float16,  # Use float16 for AWQ compatibility
-        "device_map": "auto",
+        "max_seq_length": 2048,
+        "dtype": "auto",
+        "load_in_4bit":True
     }
     if use_flash_attention:
         model_kwargs["attn_implementation"] = "flash_attention_2"
-    model = Qwen2VLForConditionalGeneration.from_pretrained(
-        model_path,
+        
+    model, processor = FastVisionModel.from_pretrained(
+        model_name = model_path, # YOUR MODEL YOU USED FOR TRAINING
         **model_kwargs
-    )
-    return model
 
-max_pixels=256*28*28
-processor = AutoProcessor.from_pretrained(model_path,max_pixels=max_pixels)
+    )
+    FastVisionModel.for_inference(model) # Enable native 2x faster inference
+        
+    return model, processor
+
 
 def process_input(image, prompt, temperature=1.5, min_p=0.1, max_tokens=256):
     if image is not None:
@@ -34,12 +38,11 @@ def process_input(image, prompt, temperature=1.5, min_p=0.1, max_tokens=256):
         {
             "role": "user",
             "content": [
-                {"type": media_type, media_type: media},
+                {"type": media_type, media_type: media, "max_pixels": 256*28*28},
                 {"type": "text", "text": prompt},
             ],
         }
-    ]
-    
+    ]    
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     image_inputs, video_inputs = process_vision_info(messages)
     inputs = processor(
@@ -48,10 +51,15 @@ def process_input(image, prompt, temperature=1.5, min_p=0.1, max_tokens=256):
         videos=video_inputs,
         padding=True,
         return_tensors="pt"
-    )
+    ).to("cuda")
+    
+    # streaming text
+    text_streamer = TextStreamer(processor)
+
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     outputs = model.generate(
         **inputs,
+        streamer = text_streamer,
         use_cache=True,
         max_new_tokens=max_tokens,
         temperature=temperature,
@@ -66,14 +74,14 @@ def create_interface():
     interface = gr.Interface(
         fn=process_input,
         inputs=[
-            gr.Image(type="filepath", label="Upload Image (optional)"),
-            gr.Textbox(label="Text Prompt", value="Mô tả nội dung hình ảnh"),
+            gr.Image(type="filepath", label="Upload Image"),
+            gr.Textbox(label="Text Prompt", value="Nhận diện văn bản xuất hiện trong ảnh"),
             gr.Slider(0.1, 2, value=1.5, label="Temperature"),
             gr.Slider(0.1, 1.0, value=0.1, label="min-p"),
             gr.Slider(2, 512, value=256, step=2, label="Max Tokens")
         ],
         outputs=gr.Textbox(label="Generated Description"),
-        title="Qwen2-VL-2B Finetuned",
+        title=f"Model name: {model_path}",
         description="Upload an image and enter a prompt to generate a description.",
     )
     return interface
@@ -83,6 +91,6 @@ if __name__ == "__main__":
     parser.add_argument("--flash-attn2", action="store_true", help="Use Flash Attention 2")
     args = parser.parse_args()
     
-    model = load_model(use_flash_attention=args.flash_attn2)
+    model, processor = load_model(use_flash_attention=args.flash_attn2)
     interface = create_interface()
     interface.launch(share=True)
