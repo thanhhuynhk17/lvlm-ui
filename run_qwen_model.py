@@ -8,6 +8,7 @@ from qwen_vl_utils import process_vision_info
 
 # Use a relative path or environment variable for the model path
 model_path = os.environ.get("QWEN_MODEL_PATH", "thanhhuynhk17/qwen2-vl-2b-ft-freeze-vit")
+MAX_PIXELS = os.environ.get("MAX_PIXELS", 1280)
 
 def load_model(use_flash_attention=False):
     model_kwargs = {
@@ -38,7 +39,7 @@ def process_input(image, prompt, temperature=1.5, min_p=0.1, max_tokens=256):
         {
             "role": "user",
             "content": [
-                {"type": media_type, media_type: media, "max_pixels": 256*28*28},
+                {"type": media_type, media_type: media, "max_pixels": MAX_PIXELS*28*28},
                 {"type": "text", "text": prompt},
             ],
         }
@@ -59,6 +60,7 @@ def process_input(image, prompt, temperature=1.5, min_p=0.1, max_tokens=256):
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     outputs = model.generate(
         **inputs,
+        do_sample=True,
         streamer = text_streamer,
         use_cache=True,
         max_new_tokens=max_tokens,
@@ -75,10 +77,10 @@ def create_interface():
         fn=process_input,
         inputs=[
             gr.Image(type="filepath", label="Upload Image"),
-            gr.Textbox(label="Text Prompt", value="Nhận diện văn bản xuất hiện trong ảnh"),
+            gr.Textbox(label="Text Prompt", value="Nhận diện văn bản xuất hiện trong ảnh với định dạng markdown"),
             gr.Slider(0.1, 2, value=1.5, label="Temperature"),
             gr.Slider(0.1, 1.0, value=0.1, label="min-p"),
-            gr.Slider(2, 512, value=256, step=2, label="Max Tokens")
+            gr.Slider(2, 1024, value=512, step=4, label="Max Tokens")
         ],
         outputs=gr.Textbox(label="Generated Description"),
         title=f"Model name: {model_path}",
