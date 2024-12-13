@@ -8,7 +8,7 @@ from qwen_vl_utils import process_vision_info
 
 # Use a relative path or environment variable for the model path
 model_path = os.environ.get("QWEN_MODEL_PATH", "thanhhuynhk17/qwen2-vl-2b-ft-freeze-vit")
-MAX_PIXELS = os.environ.get("MAX_PIXELS", 1280)
+MAX_PIXELS = int(os.environ.get("MAX_PIXELS", 1280))
 
 def load_model(use_flash_attention=False):
     model_kwargs = {
