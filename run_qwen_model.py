@@ -36,22 +36,23 @@ def greet(name):
     return "Hello " + name + "!"
 
 
-def process_question(image, prompt, max_tokens=256):
+def process_question(image, prompt=None, messages=None, max_tokens=256):
     if image is not None:
         media_type = "image"
         media = image
     else:
-        return "Ảnh không tìm thấy!"
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": media_type, media_type: media,
-                    "max_pixels": MAX_PIXELS*28*28},
-                {"type": "text", "text": prompt},
-            ],
-        }
-    ]
+        return "Ảnh không tìm thấy!", None
+    if messages is None:
+      messages = [
+          {
+              "role": "user",
+              "content": [
+                  {"type": media_type, media_type: media,
+                      "max_pixels": MAX_PIXELS*28*28},
+                  {"type": "text", "text": prompt},
+              ],
+          }
+      ]
     text = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True)
     image_inputs, video_inputs = process_vision_info(messages)
@@ -79,22 +80,95 @@ def process_question(image, prompt, max_tokens=256):
 
     output_text = processor.batch_decode(outputs, skip_special_tokens=True)
     response = output_text[0].split("assistant\n")[-1].strip()
-    return response
+    return response, messages
 
 
 def process_input(image1, image2, max_tokens):
-    return "not implemented"
+  global_outputs = []
+  content_output, messages = process_question(image1,\
+                                    "Nhận diện văn bản trong mục I định dạng markdown",\
+                                    max_tokens=max_tokens)
+  global_outputs = global_outputs + [content_output]
+  # image front
+  front_promts = ["Trả lời ngắn gọn thông tin của người thứ nhất: " + promt for promt in  ["Họ và tên",\
+                                                            "năm sinh bao nhiêu",\
+                                                              "số cccd",\
+                                                              "địa chỉ ở đâu"]]
+  front1_outputs = []
+  if messages is not None:
+    messages.append({
+              "role": "assistant",
+              "content": [
+                  {"type": "text", "text": content_output}
+              ],
+          })
+  for promt in front_promts:
+    if messages is not None:
+      messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": promt}
+                ],
+            })
+
+    front1_output, messages = process_question(image1,\
+                                      messages = messages,
+                                      max_tokens=max_tokens)
+    front1_outputs.append(front1_output)
+    
+    if messages is not None:
+      messages.append({
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": front1_output}
+                ],
+            })
+  # front2
+  front2_promts = ["Trả lời ngắn gọn thông tin của người thứ hai: " + promt for promt in  ["Họ và tên",\
+                                                            "năm sinh bao nhiêu",\
+                                                              "số cccd",\
+                                                              "địa chỉ ở đâu"]]
+  front2_outputs = []
+  for promt in front2_promts:
+    if messages is not None:
+      messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": promt}
+                ],
+            })
+
+    front2_output, messages = process_question(image1,\
+                                      messages = messages,
+                                      max_tokens=max_tokens)
+    front2_outputs.append(front2_output)
+    
+    if messages is not None:
+      messages.append({
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": front2_output}
+                ],
+            })
+  global_outputs = global_outputs + front1_outputs
+  global_outputs = global_outputs + front2_outputs
+
+  # image back
+
+  return global_outputs
 
 with gr.Blocks() as demo:
     gr.Markdown("# Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất")
     with gr.Row():
-        image_input_front = gr.Image(label="Mặt trước GCN quyền sử dụng đất", width=100)
-        image_input_back = gr.Image(label="Mặt sau GCN quyền sử dụng đất", width=100)
+        image_input_front = gr.Image(type="filepath", label="Mặt trước GCN quyền sử dụng đất", width=100)
+        image_input_back = gr.Image(type="filepath", label="Mặt sau GCN quyền sử dụng đất", width=100)
+    max_tokens = gr.Slider(2, 256, value=256, step=2, label="Max Tokens")
     scan_button = gr.Button("Scan")
     # Editor
     gr.Markdown("""
         ## Thông tin mặt trước
                 """)
+    content = gr.Textbox(label="Nội dung văn bản")
     with gr.Row():
         gr.Markdown("""
             ### Người thứ nhất
@@ -109,11 +183,21 @@ with gr.Blocks() as demo:
             ### Người thứ hai (nếu có)
                     """)
         # Front side
-        user_name_output = gr.Textbox(label="Họ và tên")
-        dob_output = gr.Textbox(label="Năm sinh")
-        cccd_output = gr.Textbox(label="Số CCCD")
-        address_output = gr.Textbox(label="Địa chỉ thường trú")
+        user_name_output2 = gr.Textbox(label="Họ và tên")
+        dob_output2 = gr.Textbox(label="Năm sinh")
+        cccd_output2 = gr.Textbox(label="Số CCCD")
+        address_output2 = gr.Textbox(label="Địa chỉ thường trú")
 
+    scan_button.click(process_input,\
+                      inputs=[
+                        image_input_front,
+                        image_input_back,
+                        max_tokens],\
+                      outputs=[
+                        content,
+                        user_name_output, dob_output, cccd_output, address_output,
+                        user_name_output2, dob_output2, cccd_output2, address_output2,
+                        ])
     # gr.Markdown("""
     #     ## Thông tin mặt sau
     #             """)
@@ -133,8 +217,6 @@ if __name__ == "__main__":
                         help="Use Flash Attention 2")
     args = parser.parse_args()
 
-
     model, processor = load_model(use_flash_attention=args.flash_attn2)
 
-        
-    demo.launch()
+    demo.launch(share=True)
