@@ -1,3 +1,4 @@
 qwen_venv/
 __pycache__/
 *.pyc
+.gradio
