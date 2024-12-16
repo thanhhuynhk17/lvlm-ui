@@ -86,7 +86,7 @@ def process_question(image, prompt=None, messages=None, max_tokens=256):
 def process_input(image1, image2, max_tokens):
   global_outputs = []
   content_output, messages = process_question(image1,\
-                                    "Nhận diện văn bản trong mục I định dạng markdown",\
+                                    "Nhận diện văn bản trong phần \"Giấy chứng nhận quyền sử dụng đất\" bên phải dưới dạng markdown",\
                                     max_tokens=max_tokens)
   global_outputs = global_outputs + [content_output]
   # image front
@@ -124,7 +124,7 @@ def process_input(image1, image2, max_tokens):
                 ],
             })
   # front2
-  front2_promts = ["Trả lời ngắn gọn thông tin của người thứ hai: " + promt for promt in  ["Họ và tên",\
+  front2_promts = ["Trả lời ngắn gọn thông tin của người thứ hai nếu có: " + promt for promt in  ["Họ và tên",\
                                                             "năm sinh bao nhiêu",\
                                                               "số cccd",\
                                                               "địa chỉ ở đâu"]]
@@ -158,11 +158,14 @@ def process_input(image1, image2, max_tokens):
   return global_outputs
 
 with gr.Blocks() as demo:
-    gr.Markdown("# Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất")
+    gr.Markdown(f"""
+    # Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất
+    ## Mô hình LVLM: `{model_path}`
+    """)
     with gr.Row():
         image_input_front = gr.Image(type="filepath", label="Mặt trước GCN quyền sử dụng đất", width=100)
         image_input_back = gr.Image(type="filepath", label="Mặt sau GCN quyền sử dụng đất", width=100)
-    max_tokens = gr.Slider(2, 256, value=256, step=2, label="Max Tokens")
+    max_tokens = gr.Slider(2, 512, value=512, step=2, label="Max Tokens")
     scan_button = gr.Button("Scan")
     # Editor
     gr.Markdown("""
