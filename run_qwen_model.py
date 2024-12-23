@@ -165,6 +165,10 @@ with gr.Blocks() as demo:
     # Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất
     ## Mô hình LVLM: `{model_path}`
     """)
+    gr.Markdown(f"""
+    # Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất
+    ## Mô hình LVLM: `{model_path}`
+    """)
     with gr.Row():
         image_input_front = gr.Image(type="filepath", label="Mặt trước GCN quyền sử dụng đất", width=100)
         image_input_back = gr.Image(type="filepath", label="Mặt sau GCN quyền sử dụng đất", width=100)
