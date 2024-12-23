@@ -117,21 +117,21 @@ def process_input(image1, image2, max_tokens):
   ocr_promt = "Nhận dạng văn bản xuất hiện trong bức ảnh"
   # image front
   promts_gr = [
-      "Trả lời ngắn gọn thông tin của tổ chức nếu có: tên tổ chức. ",
-      "Trả lời ngắn gọn thông tin của tổ chức nếu có: mã số doanh nghiệp",
-      "Trả lời ngắn gọn thông tin của tổ chức nếu có: địa chỉ doanh nghiệp",
+      "Trả lời ngắn gọn thông tin tên của tổ chức, nếu không có hãy trả lời \"Không tìm thấy\"",
+      "Trả lời ngắn gọn thông tin về mã số doanh nghiệp, nếu không có hãy trả lời \"Không tìm thấy\"",
+      "Trả lời ngắn gọn thông tin về địa chỉ của doanh nghiệp, nếu không có hãy trả lời \"Không tìm thấy\"",
   ]
   promts1 = [
-    "Trả lời ngắn gọn thông tin của người thứ nhất: họ và tên là gì",
-    "Trả lời ngắn gọn thông tin của người thứ nhất: năm sinh là bao nhiêu",
-    "Trả lời ngắn gọn thông tin của người thứ nhất: số cccd là bao nhiêu",
-    "Trả lời ngắn gọn thông tin của người thứ nhất: địa chỉ ở đâu",
+    "Trả lời ngắn gọn thông tin họ và tên của người thứ nhất, nếu không có hãy trả lời \"Không tìm thấy\"",
+    "Trả lời ngắn gọn thông tin về năm sinh của người thứ nhất, nếu không có hãy trả lời \"Không tìm thấy\"",
+    "Trả lời ngắn gọn thông tin về số cccd hoặc cmnd của người thứ nhất, nếu không có hãy trả lời \"Không tìm thấy\"",
+    "Trả lời ngắn gọn thông tin về địa chỉ của người thứ nhất, nếu không có hãy trả lời \"Không tìm thấy\"",
   ]
   promts2 = [
-    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: họ và tên là gì",
-    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: năm sinh là bao nhiêu",
-    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: số cccd là bao nhiêu",
-    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: địa chỉ ở đâu",
+    "Trả lời ngắn gọn thông tin về họ và tên của người thứ hai, nếu không có hãy trả lời \"Không tìm thấy\"",
+    "Trả lời ngắn gọn thông tin về năm sinh của người thứ hai, nếu không có hãy trả lời \"Không tìm thấy\"",
+    "Trả lời ngắn gọn thông tin về số cccd hoặc cmnd của người thứ hai, nếu không có hãy trả lời \"Không tìm thấy\"",
+    "Trả lời ngắn gọn thông tin về địa chỉ của người thứ hai, nếu không có hãy trả lời \"Không tìm thấy\"",
   ]
 
   messages_ctx = None
@@ -165,10 +165,7 @@ with gr.Blocks() as demo:
     # Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất
     ## Mô hình LVLM: `{model_path}`
     """)
-    gr.Markdown(f"""
-    # Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất
-    ## Mô hình LVLM: `{model_path}`
-    """)
+
     with gr.Row():
         image_input_front = gr.Image(type="filepath", label="Mặt trước GCN quyền sử dụng đất", width=100)
         image_input_back = gr.Image(type="filepath", label="Mặt sau GCN quyền sử dụng đất", width=100)
