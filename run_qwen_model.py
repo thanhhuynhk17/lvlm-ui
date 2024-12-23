@@ -16,7 +16,7 @@ MAX_PIXELS = int(os.environ.get("MAX_PIXELS", 1280))
 def load_model(use_flash_attention=False):
     model_kwargs = {
         "max_seq_length": 2048,
-        "dtype": "auto",
+        "dtype":None,
         "load_in_4bit": True
     }
     if use_flash_attention:
@@ -31,144 +31,158 @@ def load_model(use_flash_attention=False):
 
     return model, processor
 
-
-def greet(name):
-    return "Hello " + name + "!"
-
-
-def process_question(image, prompt=None, messages=None, max_tokens=256):
-    if image is not None:
-        media_type = "image"
-        media = image
-    else:
-        return "Ảnh không tìm thấy!", None
-    if messages is None:
-      messages = [
-          {
-              "role": "user",
-              "content": [
-                  {"type": media_type, media_type: media,
-                      "max_pixels": MAX_PIXELS*28*28},
-                  {"type": "text", "text": prompt},
-              ],
-          }
-      ]
-    text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True)
-    image_inputs, video_inputs = process_vision_info(messages)
-    inputs = processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt"
-    ).to("cuda")
-
-    # streaming text
-    text_streamer = TextStreamer(processor)
-
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
-    outputs = model.generate(
-        **inputs,
-        do_sample=True,
-        streamer=text_streamer,
-        use_cache=True,
-        max_new_tokens=max_tokens,
-        temperature=1.5,
-        min_p=0.1
+def convert_msg(image=None, promt=None, context_str=None, context_msgs=None):
+  if context_msgs is not None:
+    messages = context_msgs
+  else:
+    messages = []
+  # Provide context for every promt
+  if context_str is not None:
+    messages.append(
+      {
+          'role': 'assistant',
+          'content':[
+              {'type': 'text', 'text': context_str}
+          ]
+      }
     )
 
-    output_text = processor.batch_decode(outputs, skip_special_tokens=True)
-    response = output_text[0].split("assistant\n")[-1].strip()
-    return response, messages
+  # Prepare messages template
+  if image is not None:  # 1st msg include image
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "image", "image": image,
+            "max_pixels": MAX_PIXELS*28*28},
+            {"type": "text", "text": promt},
+        ],
+    })
+  else:
+    # text promt only
+    messages.append({
+        "role": "user",
+        "content": [{"type": "text", "text": promt}],
+    })
+
+  return messages
+
+def process_question(messages=None, max_tokens=2048):
+  texts = processor.apply_chat_template(
+    messages, tokenize=False, add_generation_prompt=True)
+
+  try:
+    image_inputs, video_inputs = process_vision_info(messages)
+  except AttributeError as atrr_err:
+    print(atrr_err)
+    image_inputs = None
+    video_inputs = None
+
+  inputs = processor(
+      text=texts,
+      images=image_inputs,
+      videos=video_inputs,
+      padding=True,
+      return_tensors="pt"
+  ).to("cuda")
+
+  # streaming text
+  text_streamer = TextStreamer(processor)
+
+  generated_ids = model.generate(
+      **inputs,
+      streamer=text_streamer,
+      do_sample=False,
+      use_cache=True,
+      max_new_tokens=max_tokens,
+      temperature=1.5,
+      min_p=0.1,
+      repetition_penalty=1.1  # if output begins repeating increase
+  )         # streamer=text_streamer,
+
+  generated_ids_trimmed = [
+      out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+  ]
+  output_texts = processor.batch_decode(
+      generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+  )
+  return output_texts
 
 
 def process_input(image1, image2, max_tokens):
+  import time
+
+  start = time.time()
+
   global_outputs = []
-  content_output, messages = process_question(image1,\
-                                    "Nhận diện văn bản trong mục I định dạng markdown",\
-                                    max_tokens=max_tokens)
-  global_outputs = global_outputs + [content_output]
+  ocr_promt = "Nhận dạng văn bản xuất hiện trong bức ảnh"
   # image front
-  front_promts = ["Trả lời ngắn gọn thông tin của người thứ nhất: " + promt for promt in  ["Họ và tên",\
-                                                            "năm sinh bao nhiêu",\
-                                                              "số cccd",\
-                                                              "địa chỉ ở đâu"]]
-  front1_outputs = []
-  if messages is not None:
-    messages.append({
-              "role": "assistant",
-              "content": [
-                  {"type": "text", "text": content_output}
-              ],
-          })
-  for promt in front_promts:
-    if messages is not None:
-      messages.append({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": promt}
-                ],
-            })
+  promts_gr = [
+      "Trả lời ngắn gọn thông tin của tổ chức nếu có: tên tổ chức. ",
+      "Trả lời ngắn gọn thông tin của tổ chức nếu có: mã số doanh nghiệp",
+      "Trả lời ngắn gọn thông tin của tổ chức nếu có: địa chỉ doanh nghiệp",
+  ]
+  promts1 = [
+    "Trả lời ngắn gọn thông tin của người thứ nhất: họ và tên là gì",
+    "Trả lời ngắn gọn thông tin của người thứ nhất: năm sinh là bao nhiêu",
+    "Trả lời ngắn gọn thông tin của người thứ nhất: số cccd là bao nhiêu",
+    "Trả lời ngắn gọn thông tin của người thứ nhất: địa chỉ ở đâu",
+  ]
+  promts2 = [
+    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: họ và tên là gì",
+    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: năm sinh là bao nhiêu",
+    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: số cccd là bao nhiêu",
+    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: địa chỉ ở đâu",
+  ]
 
-    front1_output, messages = process_question(image1,\
-                                      messages = messages,
-                                      max_tokens=max_tokens)
-    front1_outputs.append(front1_output)
-    
-    if messages is not None:
-      messages.append({
-                "role": "assistant",
-                "content": [
-                    {"type": "text", "text": front1_output}
-                ],
-            })
-  # front2
-  front2_promts = ["Trả lời ngắn gọn thông tin của người thứ hai: " + promt for promt in  ["Họ và tên",\
-                                                            "năm sinh bao nhiêu",\
-                                                              "số cccd",\
-                                                              "địa chỉ ở đâu"]]
-  front2_outputs = []
-  for promt in front2_promts:
-    if messages is not None:
-      messages.append({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": promt}
-                ],
-            })
-
-    front2_output, messages = process_question(image1,\
-                                      messages = messages,
-                                      max_tokens=max_tokens)
-    front2_outputs.append(front2_output)
-    
-    if messages is not None:
-      messages.append({
-                "role": "assistant",
-                "content": [
-                    {"type": "text", "text": front2_output}
-                ],
-            })
-  global_outputs = global_outputs + front1_outputs
-  global_outputs = global_outputs + front2_outputs
-
-  # image back
+  messages_ctx = None
+  ctx_str = None
+  for idx, promt in enumerate([ocr_promt] + promts_gr + promts1 + promts2):
+    if idx==0: # promt includes image
+      messages = convert_msg(image=image1, promt=promt)
+      ocr_outputs = process_question(messages)
+      # store context
+      messages_ctx = messages
+      ctx_str = ocr_outputs[0]
+      # global output
+      global_outputs = global_outputs+ocr_outputs
+      continue
+    # text only promt
+    messages = convert_msg(image=None, promt=promt, context_str=ctx_str, context_msgs=messages_ctx)
+    outputs = process_question(messages)
+    # store context
+    messages_ctx = messages
+    ctx_str = outputs[0]
+    # global output
+    global_outputs = global_outputs + outputs
+  
+  end = time.time()
+  print('Time taken: ', end - start)
 
   return global_outputs
 
 with gr.Blocks() as demo:
-    gr.Markdown("# Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất")
+    gr.Markdown(f"""
+    # Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất
+    ## Mô hình LVLM: `{model_path}`
+    """)
     with gr.Row():
         image_input_front = gr.Image(type="filepath", label="Mặt trước GCN quyền sử dụng đất", width=100)
         image_input_back = gr.Image(type="filepath", label="Mặt sau GCN quyền sử dụng đất", width=100)
-    max_tokens = gr.Slider(2, 256, value=256, step=2, label="Max Tokens")
+    max_tokens = gr.Slider(2, 1024, value=1024, step=2, label="Max Tokens")
     scan_button = gr.Button("Scan")
     # Editor
     gr.Markdown("""
         ## Thông tin mặt trước
                 """)
-    content = gr.Textbox(label="Nội dung văn bản")
+    content = gr.Textbox(label="Nội dung OCR")
+    with gr.Row():
+        gr.Markdown("""
+            ### Tổ chức
+                    """)
+        # Front side
+        gr_name_output = gr.Textbox(label="Tên tổ chức")
+        gr_id_output = gr.Textbox(label="Mã số doanh nghiệp")
+        gr_address_output = gr.Textbox(label="Địa chỉ")
     with gr.Row():
         gr.Markdown("""
             ### Người thứ nhất
@@ -195,6 +209,7 @@ with gr.Blocks() as demo:
                         max_tokens],\
                       outputs=[
                         content,
+                        gr_name_output, gr_id_output, gr_address_output,
                         user_name_output, dob_output, cccd_output, address_output,
                         user_name_output2, dob_output2, cccd_output2, address_output2,
                         ])
