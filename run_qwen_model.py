@@ -4,19 +4,20 @@ import torch
 import argparse
 from unsloth import FastVisionModel
 import os
+import time
 
 from qwen_vl_utils import process_vision_info
 
 # Use a relative path or environment variable for the model path
 model_path = os.environ.get(
-    "QWEN_MODEL_PATH", "thanhhuynhk17/qwen2-vl-2b-ft-freeze-vit")
+    "QWEN_MODEL_PATH", "unsloth/Qwen2.5-VL-7B-Instruct-unsloth-bnb-4bit")
 MAX_PIXELS = int(os.environ.get("MAX_PIXELS", 1280))
 
 
 def load_model(use_flash_attention=False):
     model_kwargs = {
         "max_seq_length": 2048,
-        "dtype":None,
+        "dtype": torch.bfloat16,
         "load_in_4bit": True
     }
     if use_flash_attention:
@@ -31,154 +32,140 @@ def load_model(use_flash_attention=False):
 
     return model, processor
 
-def convert_msg(image=None, promt=None, context_str=None, context_msgs=None):
-  if context_msgs is not None:
-    messages = context_msgs
-  else:
-    messages = []
-  # Provide context for every promt
-  if context_str is not None:
-    messages.append(
-      {
-          'role': 'assistant',
-          'content':[
-              {'type': 'text', 'text': context_str}
-          ]
-      }
+def process_question(model, processor, promt=None, images=None, chat_history=None, max_tokens=1024):
+
+    msg_content = [
+        {'type': 'text', 'text': promt},
+    ]
+    if images != None:
+        for image in images:
+            msg_content.append(
+                {'type': 'image', 'image': image, 'max_pixels': 800*28*28})
+
+    msg = [
+        # {
+        #     'role': 'system',
+        #     'content':[
+        #         {'type': 'text', 'text': SYSTEM_CTX}
+        #     ]
+        # },
+    ]
+    if chat_history != None:
+        msg.extend(chat_history)
+    msg.append({'role': 'user', 'content': msg_content})
+
+    text = processor.apply_chat_template(
+        msg, tokenize=False, add_generation_prompt=True)
+
+    try:
+        image_inputs, video_inputs = process_vision_info(msg)
+    except AttributeError as atrr_err:
+        print(atrr_err)
+        image_inputs = None
+        video_inputs = None
+
+    inputs = processor(
+        text=[text],
+        images=image_inputs,
+        videos=video_inputs,
+        padding=True,
+        return_tensors="pt"
+    ).to("cuda")
+
+    # streaming text
+    text_streamer = TextStreamer(processor)
+
+    generated_ids = model.generate(
+        **inputs,
+        streamer=text_streamer,
+        do_sample=True,
+        use_cache=False,
+        max_new_tokens=max_tokens,
+        temperature=1.5,
+        min_p=0.1,
+        # repetition_penalty=1.1  # if output begins repeating increase
     )
 
-  # Prepare messages template
-  if image is not None:  # 1st msg include image
-    messages.append({
-        "role": "user",
-        "content": [
-            {"type": "image", "image": image,
-            "max_pixels": MAX_PIXELS*28*28},
-            {"type": "text", "text": promt},
-        ],
-    })
-  else:
-    # text promt only
-    messages.append({
-        "role": "user",
-        "content": [{"type": "text", "text": promt}],
-    })
+    generated_ids_trimmed = [
+        out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+    ]
+    output_texts = processor.batch_decode(
+        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )
 
-  return messages
+    # Empty the cache after inference to free up memory
+    for i in range(3):
+        torch.cuda.empty_cache()  # Fallback to empty the entire CUDA cache
+        time.sleep(0.2)
 
-def process_question(messages=None, max_tokens=2048):
-  texts = processor.apply_chat_template(
-    messages, tokenize=False, add_generation_prompt=True)
+    # add chat history
+    if chat_history == None:
+        chat_history = []
+    chat_history.append({'role': 'user', 'content': msg_content})
+    chat_history.append({'role': 'assistant', 'content': [
+                        {'type': 'text', 'text': output_texts[0]}]})
 
-  try:
-    image_inputs, video_inputs = process_vision_info(messages)
-  except AttributeError as atrr_err:
-    print(atrr_err)
-    image_inputs = None
-    video_inputs = None
-
-  inputs = processor(
-      text=texts,
-      images=image_inputs,
-      videos=video_inputs,
-      padding=True,
-      return_tensors="pt"
-  ).to("cuda")
-
-  # streaming text
-  text_streamer = TextStreamer(processor)
-
-  generated_ids = model.generate(
-      **inputs,
-      streamer=text_streamer,
-      do_sample=False,
-      use_cache=True,
-      max_new_tokens=max_tokens,
-      temperature=1.5,
-      min_p=0.1,
-      repetition_penalty=1.1  # if output begins repeating increase
-  )         # streamer=text_streamer,
-
-  generated_ids_trimmed = [
-      out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-  ]
-  output_texts = processor.batch_decode(
-      generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-  )
-  return output_texts
+    return output_texts, chat_history
 
 
 def process_input(image1, image2, max_tokens):
-  import time
+    import time
 
-  start = time.time()
+    start = time.time()
 
-  global_outputs = []
-  ocr_promt = "Nhận dạng văn bản xuất hiện trong bức ảnh"
-  # image front
-  promts_gr = [
-      "Trả lời ngắn gọn thông tin của tổ chức nếu có: tên tổ chức. ",
-      "Trả lời ngắn gọn thông tin của tổ chức nếu có: mã số doanh nghiệp",
-      "Trả lời ngắn gọn thông tin của tổ chức nếu có: địa chỉ doanh nghiệp",
-  ]
-  promts1 = [
-    "Trả lời ngắn gọn thông tin của người thứ nhất: họ và tên là gì",
-    "Trả lời ngắn gọn thông tin của người thứ nhất: năm sinh là bao nhiêu",
-    "Trả lời ngắn gọn thông tin của người thứ nhất: số cccd là bao nhiêu",
-    "Trả lời ngắn gọn thông tin của người thứ nhất: địa chỉ ở đâu",
-  ]
-  promts2 = [
-    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: họ và tên là gì",
-    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: năm sinh là bao nhiêu",
-    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: số cccd là bao nhiêu",
-    "Trả lời ngắn gọn thông tin của người thứ hai nếu có: địa chỉ ở đâu",
-  ]
+    global_outputs = []
+    chat_history = None
+    ocr_promt = "Nhận diện văn bản từ hình ảnh\n"
 
-  messages_ctx = None
-  ctx_str = None
-  for idx, promt in enumerate([ocr_promt] + promts_gr + promts1 + promts2):
-    if idx==0: # promt includes image
-      messages = convert_msg(image=image1, promt=promt)
-      ocr_outputs = process_question(messages)
-      # store context
-      messages_ctx = messages
-      ctx_str = ocr_outputs[0]
-      # global output
-      global_outputs = global_outputs+ocr_outputs
-      continue
-    # text only promt
-    messages = convert_msg(image=None, promt=promt, context_str=ctx_str, context_msgs=messages_ctx)
-    outputs = process_question(messages)
-    # store context
-    messages_ctx = messages
-    ctx_str = outputs[0]
-    # global output
-    global_outputs = global_outputs + outputs
-  
-  end = time.time()
-  print('Time taken: ', end - start)
+    # infor extraction promt
+    info_promt = """Trả lời ngắn gọn và chính xác thông tin được hỏi.
+Nếu không tìm thấy hãy trả lời "<|not_found|>".
+1. Liệt kê đầy đủ tên người hoặc tên công ty tổ chức là chủ sở hữu đất.
+2. Trả lời thông tin về địa chỉ.
+3. Trả lời thông tin về số CCCD hoặc CMND đối với cá nhân, mã công ty đối với công ty.
+4. Số thửa đất và số tờ bản đồ.
+5. Diện tích."""
 
-  return global_outputs
+    # query promt
+    for promt in [ocr_promt, info_promt]:
+        if chat_history == None:
+            output, chat_history = process_question(model, processor,
+                                                    promt=promt,
+                                                    images=[image1, image2],
+                                                    max_tokens=max_tokens)
+        else:
+            output, chat_history = process_question(model, processor,
+                                                    promt=promt,
+                                                    chat_history=chat_history,
+                                                    max_tokens=max_tokens)
+        global_outputs += output
+
+    end = time.time()
+    print('Time taken: ', end - start)
+
+    return global_outputs
+
 
 with gr.Blocks() as demo:
     gr.Markdown(f"""
     # Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất
     ## Mô hình LVLM: `{model_path}`
     """)
-    gr.Markdown(f"""
-    # Demo nhận diện văn bản từ tài liệu về GCN quyền sử dụng đất
-    ## Mô hình LVLM: `{model_path}`
-    """)
+
     with gr.Row():
-        image_input_front = gr.Image(type="filepath", label="Mặt trước GCN quyền sử dụng đất", width=100)
-        image_input_back = gr.Image(type="filepath", label="Mặt sau GCN quyền sử dụng đất", width=100)
-    max_tokens = gr.Slider(2, 1024, value=1024, step=2, label="Max Tokens")
+        image_input_front = gr.Image(
+            type="filepath", label="Mặt trước GCN quyền sử dụng đất", width=100)
+        image_input_back = gr.Image(
+            type="filepath", label="Mặt sau GCN quyền sử dụng đất", width=100)
+    max_tokens = gr.Slider(2, 2048, value=1024, step=2, label="Max Tokens")
     scan_button = gr.Button("Scan")
     # Editor
-    gr.Markdown("""
-        ## Thông tin mặt trước
-                """)
+    gr.Markdown("""## Nội dung OCR""")
     content = gr.Textbox(label="Nội dung OCR")
+
+    gr.Markdown("""## Trích xuất thông tin""")
+    info = gr.Textbox(label="Thông tin được trích xuất")
+
     with gr.Row():
         gr.Markdown("""
             ### Tổ chức
@@ -206,27 +193,14 @@ with gr.Blocks() as demo:
         cccd_output2 = gr.Textbox(label="Số CCCD")
         address_output2 = gr.Textbox(label="Địa chỉ thường trú")
 
-    scan_button.click(process_input,\
-                      inputs=[
-                        image_input_front,
-                        image_input_back,
-                        max_tokens],\
-                      outputs=[
-                        content,
-                        gr_name_output, gr_id_output, gr_address_output,
-                        user_name_output, dob_output, cccd_output, address_output,
-                        user_name_output2, dob_output2, cccd_output2, address_output2,
+    scan_button.click(process_input,
+                        inputs=[
+                            image_input_front,
+                            image_input_back,
+                            max_tokens],
+                        outputs=[
+                            content, info
                         ])
-    # gr.Markdown("""
-    #     ## Thông tin mặt sau
-    #             """)
-    # with gr.Row():
-    #     # Front side
-    #     user_name_output = gr.Textbox(label="Họ và tên")
-    #     dob_output = gr.Textbox(label="Năm sinh")
-    #     cccd_output = gr.Textbox(label="Số CCCD")
-    #     address_output = gr.Textbox(label="Địa chỉ thường trú")
-    #     # Back side
 
 
 if __name__ == "__main__":
