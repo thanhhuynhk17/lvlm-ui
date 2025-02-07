@@ -43,12 +43,12 @@ def process_question(model, processor, promt=None, images=None, chat_history=Non
                 {'type': 'image', 'image': image, 'max_pixels': 800*28*28})
 
     msg = [
-        # {
-        #     'role': 'system',
-        #     'content':[
-        #         {'type': 'text', 'text': SYSTEM_CTX}
-        #     ]
-        # },
+        {
+            'role': 'system',
+            'content':[
+                {'type': 'text', 'text': "Hỗ trợ nhận diện văn bản tiếng Việt từ hình ảnh."}
+            ]
+        },
     ]
     if chat_history != None:
         msg.extend(chat_history)
@@ -79,10 +79,11 @@ def process_question(model, processor, promt=None, images=None, chat_history=Non
         **inputs,
         streamer=text_streamer,
         do_sample=True,
-        use_cache=False,
+        use_cache=True,
         max_new_tokens=max_tokens,
-        temperature=1.5,
+        temperature=0.6,
         min_p=0.1,
+        top_p=0.95,
         # repetition_penalty=1.1  # if output begins repeating increase
     )
 
@@ -120,7 +121,7 @@ def process_input(image1, image2, max_tokens):
     # infor extraction promt
     info_promt = """Trả lời ngắn gọn và chính xác thông tin được hỏi.
 Nếu không tìm thấy hãy trả lời "<|not_found|>".
-1. Liệt kê đầy đủ tên người hoặc tên công ty tổ chức là chủ sở hữu đất.
+1. Chủ sở hữu đất trong giấy chứng nhận.
 2. Trả lời thông tin về địa chỉ.
 3. Trả lời thông tin về số CCCD hoặc CMND đối với cá nhân, mã công ty đối với công ty.
 4. Số thửa đất và số tờ bản đồ.
