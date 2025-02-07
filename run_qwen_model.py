@@ -152,6 +152,7 @@ with gr.Blocks() as demo:
     ## Mô hình LVLM: `{model_path}`
     """)
 
+
     with gr.Row():
         image_input_front = gr.Image(
             type="filepath", label="Mặt trước GCN quyền sử dụng đất", width=100)
